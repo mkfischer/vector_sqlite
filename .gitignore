@@ -210,3 +210,4 @@ pyrightconfig.json
 .aider*
 .env
 doc_load.txt
+docs/**
