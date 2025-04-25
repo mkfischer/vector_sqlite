@@ -688,4 +688,5 @@ if __name__ == "__main__":
          _print_error("An unexpected critical error occurred.", e)
 
     cprint("\n--- FtlDb Example Finished ---", "cyan", attrs=["bold"])
-
+    os.remove(DB_FILE)
+    os.remove(INDEX_FILE)

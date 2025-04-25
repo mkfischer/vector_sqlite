@@ -212,3 +212,4 @@ pyrightconfig.json
 doc_load.txt
 docs/**
 fql.db
+ftl-recreate.txt
