@@ -1,7 +1,7 @@
 import faiss
 import numpy as np
 import sqlite3
-from typing import Optional, List, Dict, Tuple, Union
+from typing import Optional, List, Dict, Tuple, Union, Any
 from data_schema import IndexData
 from contextlib import closing
 import pickle
@@ -12,7 +12,13 @@ import argparse
 # Import fastembed if USE_FASTEMBED is True
 USE_FASTEMBED = True
 if USE_FASTEMBED:
-    from fastembed import TextEmbedding
+    try:
+        from fastembed import TextEmbedding
+    except ImportError:
+        cprint("fastembed is not installed. Please install it to use fastembed features.", "yellow")
+        USE_FASTEMBED = False
+else:
+    TextEmbedding = Any
 
 class FqlDb:
     """
@@ -48,7 +54,7 @@ class FqlDb:
         self.embedding_model = None  # Initialize embedding_model
         self.index = self._load_or_build_index()
 
-    def _load_or_build_index(self) -> Union[faiss.IndexIDMap2, "fastembed.embedding.TextEmbedding"]:
+    def _load_or_build_index(self) -> Union[faiss.IndexIDMap2, Any]:
         """Loads the index from file if it exists, otherwise builds a new index.
 
         Returns:
@@ -68,7 +74,7 @@ class FqlDb:
             cprint(f"Index {self.index_name} created successfully.", "green")
         return self.index
 
-    def build_index(self) -> Union[faiss.IndexIDMap2, "fastembed.embedding.TextEmbedding"]:
+    def build_index(self) -> Union[faiss.IndexIDMap2, Any]:
         """Builds a FAISS index or initializes a fastembed model based on configuration.
 
         Returns:
