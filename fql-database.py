@@ -11,6 +11,7 @@ from termcolor import colored
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import ValidationError
 import os # Added for tearDown
+import ast # Added for literal_eval
 
 # Note: The use of a class structure here follows the user request,
 # despite potentially conflicting with conventions discouraging OOP.
@@ -219,18 +220,28 @@ class FqlDb:
                 metadata_dict = {}
                 try:
                     # Use ast.literal_eval for safer evaluation than eval()
-                    import ast
                     metadata_dict = ast.literal_eval(row[2]) if row[2] else {}
                 except (ValueError, SyntaxError):
                      print(colored(f"Warning: Could not parse metadata for ID {row[0]}: {row[2]}", "yellow"))
                      metadata_dict = {"raw_metadata": row[2]} # Keep raw string if parsing fails
 
-                results.append({
-                    "id": row[0],
-                    "content": row[1],
-                    "metadata": metadata_dict,
-                    "distance": distances[i] # Corresponding distance
-                })
+                # Ensure index i is valid for distances list
+                if i < len(distances):
+                    results.append({
+                        "id": row[0],
+                        "content": row[1],
+                        "metadata": metadata_dict,
+                        "distance": distances[i] # Corresponding distance
+                    })
+                else:
+                    # Handle cases where retrieve might return fewer items than k if some IDs weren't found
+                    print(colored(f"Warning: Mismatch between retrieved data and distances for ID {row[0]}. Skipping distance.", "yellow"))
+                    results.append({
+                        "id": row[0],
+                        "content": row[1],
+                        "metadata": metadata_dict,
+                        "distance": None # Indicate missing distance
+                    })
         return results
 
 
@@ -276,7 +287,8 @@ class TestFqlDb(unittest.TestCase):
         print(colored("Query:", "cyan"), query)
         print(colored("Results:", "cyan"))
         for res in results:
-             print(f"  ID: {colored(res['id'], 'yellow')}, Dist: {colored(f\"{res['distance']:.4f}\", 'magenta')}, Content: {colored(res['content'], 'white')}")
+             # Corrected line: removed unnecessary backslash and nested f-string
+             print(f"  ID: {colored(res['id'], 'yellow')}, Dist: {colored(f'{res["distance"]:.4f}', 'magenta')}, Content: {colored(res['content'], 'white')}")
 
         self.assertGreater(len(results), 0, "Should return at least one result")
         self.assertLessEqual(len(results), 2, "Should return at most k=2 results")
@@ -312,5 +324,8 @@ class TestFqlDb(unittest.TestCase):
 
 if __name__ == '__main__':
     # Provides more verbose output
+    # Added import for ast
+    import ast
     runner = unittest.TextTestRunner(verbosity=2)
     unittest.main(testRunner=runner)
+
