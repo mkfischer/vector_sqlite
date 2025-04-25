@@ -367,7 +367,8 @@ class TestFtlDb(unittest.TestCase):
         """Test error handling for dimension mismatch when creating a new index."""
         wrong_dimension = TEST_DIMENSION + 1
         # Expect ValueError because provided dimension must match model for new index
-        with self.assertRaisesRegex(ValueError, f"Provided dimension \({wrong_dimension}\) must match model dimension \({TEST_DIMENSION}\) for a new index."):
+        # Use raw f-string (rf"...") to avoid SyntaxWarning for \( and \)
+        with self.assertRaisesRegex(ValueError, rf"Provided dimension \({wrong_dimension}\) must match model dimension \({TEST_DIMENSION}\) for a new index."):
              FtlDb(index_name=self.index_name,
                    dimension=wrong_dimension, # Provide wrong dimension
                    db_path=self.db_path,
