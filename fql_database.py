@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Tuple, Union, Any, Literal, Iterable
 from contextlib import closing
 import pickle
 import os
+import json # Added missing import
 from termcolor import cprint
 import argparse
 from pydantic import BaseModel as PydanticBaseModel, Field
@@ -385,8 +386,6 @@ class FqlDb:
         Returns:
             faiss.IndexIDMap2: The FAISS index.
         """
-        flat_index = faiss.IndexFlatL2(dimension)
-        index = faiss.IndexIDMap2(flat_index)
         cprint(f"Building FAISS index '{self.index_name}' with dimension {dimension}.", "yellow")
         flat_index = faiss.IndexFlatL2(dimension)
         index = faiss.IndexIDMap2(flat_index)
@@ -414,7 +413,6 @@ class FqlDb:
 
     def save_index(self) -> None:
         """
-        Saves the FAISS index to a file.
         Saves the current FAISS index to a file named '{index_name}.pkl'.
         """
         index_file = f"{self.index_name}.pkl"
@@ -430,10 +428,6 @@ class FqlDb:
 
     def load_index(self) -> faiss.IndexIDMap2:
         """
-        Loads the FAISS index from file using the instance's index_name.
-
-        Returns:
-            faiss.Index: The loaded FAISS index.
         Loads the FAISS index from the file '{index_name}.pkl'.
 
         Returns:
@@ -461,8 +455,6 @@ class FqlDb:
 
     def store_to_db(self, data: List[IndexData]) -> None:
         """
-        Stores data to the SQLite database.
-
         Stores or updates data in the SQLite database table named '{index_name}'.
 
         Args:
