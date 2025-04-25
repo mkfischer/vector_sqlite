@@ -1,0 +1,7 @@
+[project]
+name = "vector-sqlite"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "sentence-transformers>=4.1.0",
+]
