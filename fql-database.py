@@ -288,7 +288,7 @@ class TestFqlDb(unittest.TestCase):
         print(colored("Results:", "cyan"))
         for res in results:
              # Corrected line: removed unnecessary backslash and nested f-string
-             print(f"  ID: {colored(res['id'], 'yellow')}, Dist: {colored(f'{res[\"distance\"]:.4f}', 'magenta')}, Content: {colored(res['content'], 'white')}")
+             print(f"  ID: {colored(res['id'], 'yellow')}, Dist: {colored(f'{res["distance"]:.4f}', 'magenta')}, Content: {colored(res['content'], 'white')}")
 
         self.assertGreater(len(results), 0, "Should return at least one result")
         self.assertLessEqual(len(results), 2, "Should return at most k=2 results")
