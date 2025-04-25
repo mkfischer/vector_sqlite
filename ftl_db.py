@@ -2,7 +2,7 @@ import faiss
 import numpy as np
 import sqlite3
 from typing import Optional, List, Dict, Tuple, Any, Generator
-from pydantic import BaseModel as PydanticBaseModel, Field, validator, ValidationError
+from pydantic import BaseModel as PydanticBaseModel, Field, field_validator, ValidationError
 from contextlib import closing, contextmanager
 import pickle
 import os
@@ -33,7 +33,8 @@ class IndexData(PydanticBaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-    @validator('vector')
+    @field_validator('vector')
+    @classmethod
     def vector_must_be_numpy_array(cls, v):
         if not isinstance(v, np.ndarray):
             raise ValueError("vector must be a numpy array")
@@ -42,7 +43,8 @@ class IndexData(PydanticBaseModel):
         # Ensure float32 for FAISS compatibility
         return v.astype(np.float32)
 
-    @validator('id')
+    @field_validator('id')
+    @classmethod
     def id_must_be_non_negative_int(cls, v):
         if not isinstance(v, int) or v < 0:
             raise ValueError("id must be a non-negative integer")
