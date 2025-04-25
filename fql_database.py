@@ -7,6 +7,7 @@ from contextlib import closing
 import pickle
 import os
 from termcolor import cprint
+import argparse
 
 class FqlDb:
     """
@@ -190,6 +191,24 @@ class FqlDb:
              self.connection.close()
              cprint("Database connection closed.", "yellow")
 
+    def usage(self):
+        """Prints usage instructions for the FqlDb class."""
+        cprint("Usage:","cyan")
+        cprint("Initialize FqlDb:","green")
+        cprint("  fql_db = FqlDb(index_name='my_index', dimension=128, db_name='my_db.db')","white")
+        cprint("Add data to the index:","green")
+        cprint("  fql_db.add_to_index(data=[IndexData(...)])","white")
+        cprint("Store data to the database:","green")
+        cprint("  fql_db.store_to_db(data=[IndexData(...)])","white")
+        cprint("Search the index:","green")
+        cprint("  distances, ids = fql_db.search_index(query=np.array([1.0, 2.0], dtype=np.float32), k=3)","white")
+        cprint("Retrieve data from the database:","green")
+        cprint("  retrieved_data = fql_db.retrieve(ids=[1, 2, 3])","white")
+        cprint("Save the index:","green")
+        cprint("  fql_db.save_index()","white")
+        cprint("Load the index:","green")
+        cprint("  fql_db.load_index()","white")
+
 
 def cleanup_test_files(index_name: str, db_name: str):
     """Removes test files."""
@@ -299,4 +318,13 @@ def test_fql_db():
 
 
 if __name__ == "__main__":
-    test_fql_db()
+    parser = argparse.ArgumentParser(description="Test FqlDb or print usage.")
+    parser.add_argument("--usage", action="store_true", help="Print FqlDb usage instructions.")
+    args = parser.parse_args()
+
+    if args.usage:
+        fql_db = FqlDb(index_name='temp', dimension=1)  # Dummy instantiation for usage printing
+        fql_db.usage()
+        del fql_db
+    else:
+        test_fql_db()
