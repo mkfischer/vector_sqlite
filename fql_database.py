@@ -38,7 +38,8 @@ class FqlDb:
         index_file = f"{self.index_name}.pkl"
         if os.path.exists(index_file):
             try:
-                self.index = self.load_index(self.index_name)
+                # Use the instance method load_index which uses self.index_name
+                self.index = self.load_index()
                 cprint(f"Index {self.index_name} loaded successfully.", "green")
             except Exception as e:
                 cprint(f"Failed to load index {self.index_name}: {e}. Building a new one.", "yellow")
@@ -91,17 +92,15 @@ class FqlDb:
             pickle.dump(chunk, f)
         cprint(f"Index {self.index_name} saved successfully.", "green")
 
-    def load_index(self, index_name: str) -> faiss.Index:
+    def load_index(self) -> faiss.Index:
         """
-        Loads a FAISS index from a file.
-
-        Args:
-            index_name (str): The name of the index to load.
+        Loads the FAISS index from file using the instance's index_name.
 
         Returns:
             faiss.Index: The loaded FAISS index.
         """
-        with open(f"{index_name}.pkl", "rb") as f:
+        index_file = f"{self.index_name}.pkl"
+        with open(index_file, "rb") as f:
             index = faiss.deserialize_index(pickle.load(f))
         return index
 
@@ -116,19 +115,16 @@ class FqlDb:
             values = []
             for point in data:
                 values.append((point.id, point.content, str(point.metadata)))
-            with self.connection:
-                res = self.connection.execute(
+            # Use a dedicated cursor for table creation and insertion
+            with closing(self.connection.cursor()) as cur:
+                cur.execute(
                     f"""CREATE TABLE IF NOT EXISTS {self.index_name}(id INTEGER PRIMARY KEY, content TEXT, metadata TEXT)"""
                 )
-
-                # Use INSERT OR IGNORE to avoid errors if IDs already exist,
-                # or handle potential duplicates based on desired behavior.
-                # For this test, ignoring duplicates seems reasonable if the goal
-                # is just to ensure the data exists. If overwriting is desired,
-                # use INSERT OR REPLACE.
-                res = self.connection.executemany(
+                cur.executemany(
                     f"""INSERT OR IGNORE INTO {self.index_name} (id, content, metadata) VALUES (?,?,?)""", values
                 )
+            # Since isolation_level=None (autocommit), changes should be persisted immediately.
+            # No explicit commit needed here.
             cprint(f"Stored/updated {len(data)} records in database table {self.index_name}.", "green")
 
         except Exception as e:
@@ -147,26 +143,43 @@ class FqlDb:
             Tuple[List[float], List[int]]: A tuple containing the distances and IDs of the nearest neighbors.
         """
         D, I = self.index.search(query, k)
-        return list(D[0]), list(I[0])
+        # Convert numpy types to standard Python types
+        distances = [float(d) for d in D[0]]
+        ids = [int(i) for i in I[0]]
+        return distances, ids
 
     def retrieve(self, ids: List[int]) -> List[Tuple]:
         """
         Retrieves data from the SQLite database based on a list of IDs.
 
         Args:
-            ids (List[int]): A list of IDs to retrieve.
+            ids (List[int]): A list of IDs to retrieve. Expects standard Python ints.
 
         Returns:
             List[Tuple]: A list of tuples containing the retrieved data.
         """
         if not ids:
             return []
-        cur = self.connection.cursor()
+
         rows = []
-        qs = ", ".join("?" * len(ids))
-        with closing(self.connection.cursor()) as cur:
-            cur.execute(f"""SELECT * FROM {self.index_name} WHERE id IN ({','.join(['?']*len(ids))})""", ids)
+        cur = None
+        try:
+            cur = self.connection.cursor()
+            # Ensure IDs are standard Python integers (should be guaranteed by search_index now)
+            placeholders = ','.join('?' * len(ids))
+            sql = f"SELECT id, content, metadata FROM {self.index_name} WHERE id IN ({placeholders})"
+            cur.execute(sql, ids)
             rows = cur.fetchall()
+        except sqlite3.Error as e: # Catch specific SQLite errors
+            cprint(f"Error during retrieve: {e}", "red")
+            # Optionally re-raise or handle
+            raise # Re-raise the exception to make test failures clear
+        except Exception as e:
+             cprint(f"An unexpected error occurred during retrieve: {e}", "red")
+             raise
+        finally:
+            if cur:
+                cur.close()
         return rows
 
     def __del__(self):
@@ -211,56 +224,78 @@ def test_fql_db():
     cleanup_test_files(index_name, db_name)
     # --------------------------------------
 
-    test_data = [
-        IndexData(vector=np.array([1.0, 2.0]), id=1, content="Test content 1", metadata={"key1": "value1"}),
-        IndexData(vector=np.array([3.0, 4.0]), id=2, content="Test content 2", metadata={"key2": "value2"}),
-    ]
+    fql_db = None # Initialize to None for finally block
+    loaded_fql_db = None # Initialize to None for finally block
+    try:
+        test_data = [
+            IndexData(vector=np.array([1.0, 2.0], dtype=np.float32), id=1, content="Test content 1", metadata={"key1": "value1"}),
+            IndexData(vector=np.array([3.0, 4.0], dtype=np.float32), id=2, content="Test content 2", metadata={"key2": "value2"}),
+        ]
 
-    # Create FqlDb instance
-    fql_db = FqlDb(index_name=index_name, dimension=dimension, db_name=db_name)
+        # Create FqlDb instance
+        fql_db = FqlDb(index_name=index_name, dimension=dimension, db_name=db_name)
 
-    # Test add_to_index and store_to_db
-    fql_db.add_to_index(test_data)
-    fql_db.store_to_db(test_data)
+        # Test add_to_index and store_to_db
+        fql_db.add_to_index(test_data)
+        fql_db.store_to_db(test_data)
 
-    # Test search_index and retrieve
-    query_vector = np.array([[2.0, 3.0]], dtype=np.float32)
-    distances, ids = fql_db.search_index(query_vector, k=2)
-    assert len(distances) == 2
-    assert len(ids) == 2
-    cprint(f"Search results - Distances: {distances}, IDs: {ids}", "cyan")
+        # Test search_index and retrieve
+        query_vector = np.array([[2.0, 3.0]], dtype=np.float32)
+        distances, ids = fql_db.search_index(query_vector, k=2)
+        assert len(distances) == 2
+        assert len(ids) == 2
+        # Sort IDs to ensure consistent order for assertion
+        ids.sort()
+        assert ids == [1, 2]
+        cprint(f"Search results - Distances: {distances}, IDs: {ids}", "cyan")
 
-    retrieved_data = fql_db.retrieve(ids)
-    assert len(retrieved_data) == 2, f"Expected 2 results, got {len(retrieved_data)}"
-    retrieved_ids = {row[0] for row in retrieved_data}
-    assert set(ids) == retrieved_ids, f"Expected IDs {set(ids)}, got {retrieved_ids}"
-    cprint(f"Retrieved data: {retrieved_data}", "cyan")
+        retrieved_data = fql_db.retrieve(ids)
+        assert len(retrieved_data) == 2, f"Expected 2 results, got {len(retrieved_data)}. Data: {retrieved_data}"
+        retrieved_ids = sorted([row[0] for row in retrieved_data]) # Sort retrieved IDs
+        assert retrieved_ids == ids, f"Expected IDs {ids}, got {retrieved_ids}"
+        cprint(f"Retrieved data: {retrieved_data}", "cyan")
 
 
-    # Test save_index and load_index
-    fql_db.save_index()
-    # Close the current connection before loading a new instance
-    fql_db.connection.close()
-    fql_db.connection = None # Prevent __del__ from trying to close again
+        # Test save_index and load_index
+        fql_db.save_index()
+        # Close the current connection before loading a new instance
+        if fql_db.connection:
+            fql_db.connection.close()
+            fql_db.connection = None # Prevent __del__ from trying to close again
 
-    loaded_fql_db = FqlDb(index_name=index_name, dimension=dimension, db_name=db_name)  # Load index
-    # Verify loaded index has data
-    assert loaded_fql_db.index.ntotal == len(test_data)
-    cprint("Index loaded successfully after save.", "green")
+        loaded_fql_db = FqlDb(index_name=index_name, dimension=dimension, db_name=db_name)  # Load index
+        # Verify loaded index has data
+        assert loaded_fql_db.index.ntotal == len(test_data)
+        cprint("Index loaded successfully after save.", "green")
 
-    # Test search and retrieve with loaded index
-    distances_loaded, ids_loaded = loaded_fql_db.search_index(query_vector, k=2)
-    assert ids_loaded == ids
-    retrieved_data_loaded = loaded_fql_db.retrieve(ids_loaded)
-    assert len(retrieved_data_loaded) == 2
+        # Test search and retrieve with loaded index
+        distances_loaded, ids_loaded = loaded_fql_db.search_index(query_vector, k=2)
+        ids_loaded.sort() # Sort for consistent assertion
+        assert ids_loaded == ids
+        retrieved_data_loaded = loaded_fql_db.retrieve(ids_loaded)
+        assert len(retrieved_data_loaded) == 2
+        retrieved_ids_loaded = sorted([row[0] for row in retrieved_data_loaded])
+        assert retrieved_ids_loaded == ids_loaded
 
-    # --- Clean up test files ---
-    del fql_db # Ensure __del__ is called if connection wasn't manually closed
-    del loaded_fql_db # Ensure __del__ is called
-    cleanup_test_files(index_name, db_name)
-    # ---------------------------
+        cprint("All FqlDb tests passed!", "green")
 
-    cprint("All FqlDb tests passed!", "green")
+    except Exception as e:
+        cprint(f"Test failed: {e}", "red")
+        raise # Re-raise exception to make test runner aware of failure
+    finally:
+        # --- Clean up test files ---
+        # Ensure connections are closed if objects were created
+        if fql_db and fql_db.connection:
+            fql_db.connection.close()
+            fql_db.connection = None
+        if loaded_fql_db and loaded_fql_db.connection:
+            loaded_fql_db.connection.close()
+            loaded_fql_db.connection = None
+        # Explicitly delete objects before cleanup to trigger __del__ if needed (though connection is now None)
+        del fql_db
+        del loaded_fql_db
+        cleanup_test_files(index_name, db_name)
+        # ---------------------------
 
 
 if __name__ == "__main__":
