@@ -9,23 +9,57 @@ import os
 from termcolor import cprint
 import argparse
 
+try:
+    from fastembed import TextEmbedding  # Optional dependency
+    has_fastembed = True
+except ImportError:
+    cprint("FastEmbed not found. Install with 'pip install fastembed'.", "yellow")
+    has_fastembed = False
+
 class FqlDb:
     """
-    A class for combining vector similarity search with a SQLite database.
+    A class for combining vector similarity search with a SQLite database,
+    offering options for FAISS-based indexing and FastEmbed integration.
     """
 
-    def __init__(self, index_name: str, dimension: int, db_name: str = "fql.db"):
+    def __init__(
+        self,
+        index_name: str,
+        dimension: int,
+        db_name: str = "fql.db",
+        use_fastembed: bool = False,
+        fastembed_model_name: str = "BAAI/bge-small-en-v1.5"  # Default FastEmbed model
+    ):
         """
         Initializes the FqlDb object.
 
         Args:
-            index_name (str): The name of the index.
-            dimension (int): The dimension of the vectors.
+            index_name (str): The name of the index and database table.
+            dimension (int): The dimension of the vectors. Required if not using FastEmbed.
             db_name (str, optional): The name of the SQLite database file. Defaults to "fql.db".
+            use_fastembed (bool, optional): Whether to use FastEmbed for embedding generation. Defaults to False.
+            fastembed_model_name (str, optional): The name of the FastEmbed model to use.
+                Defaults to "BAAI/bge-small-en-v1.5".
+        Raises:
+            ValueError: If FastEmbed is specified but the library is not installed.
         """
         self.index_name = index_name
-        self.dimension = dimension
         self.db_name = db_name
+        self.use_fastembed = use_fastembed
+        self.fastembed_model_name = fastembed_model_name
+
+        if use_fastembed:
+            if not has_fastembed:
+                raise ValueError("FastEmbed is specified but the library is not installed. Please install it using 'pip install fastembed'.")
+            self.embedding_model = TextEmbedding(model_name=self.fastembed_model_name)
+            self.dimension = self.embedding_model.dimension  # Infer dimension from FastEmbed model
+            cprint(f"Using FastEmbed model: {self.fastembed_model_name} with dimension {self.dimension}", "green")
+        else:
+            if not isinstance(dimension, int) or dimension <= 0:
+                raise ValueError("Dimension must be a positive integer when not using FastEmbed.")
+            self.dimension = dimension
+            self.embedding_model = None
+
         self.connection = sqlite3.Connection(self.db_name, isolation_level=None)
         self.index = self._load_or_build_index()
 
@@ -39,7 +73,6 @@ class FqlDb:
         index_file = f"{self.index_name}.pkl"
         if os.path.exists(index_file):
             try:
-                # Use the instance method load_index which uses self.index_name
                 self.index = self.load_index()
                 cprint(f"Index {self.index_name} loaded successfully.", "green")
             except Exception as e:
@@ -50,7 +83,6 @@ class FqlDb:
             self.index = self.build_index(self.dimension)
             cprint(f"Index {self.index_name} created successfully.", "green")
         return self.index
-
 
     def build_index(self, dimension: int) -> faiss.IndexIDMap2:
         """
@@ -68,7 +100,8 @@ class FqlDb:
 
     def add_to_index(self, data: List[IndexData]) -> None:
         """
-        Adds data to the FAISS index.
+        Adds data to the FAISS index. If using FastEmbed, generates embeddings
+        before adding to the index.
 
         Args:
             data (List[IndexData]): A list of IndexData objects to add.
@@ -77,7 +110,14 @@ class FqlDb:
         vectors = []
         for point in data:
             ids.append(point.id)
-            vectors.append(point.vector)
+            if self.use_fastembed and self.embedding_model:
+                try:
+                    vectors.append(self.embedding_model.embed(point.content)[0])  # Generate embedding using FastEmbed
+                except Exception as e:
+                    cprint(f"FastEmbed embedding generation failed for id {point.id}: {e}", "red")
+                    raise
+            else:
+                vectors.append(point.vector)
 
         ids = np.array(ids, dtype=np.int64)
         vectors = np.array(vectors, dtype=np.float32)
@@ -88,10 +128,14 @@ class FqlDb:
         """
         Saves the FAISS index to a file.
         """
-        chunk = faiss.serialize_index(self.index)
-        with open(f"{self.index_name}.pkl", "wb") as f:
-            pickle.dump(chunk, f)
-        cprint(f"Index {self.index_name} saved successfully.", "green")
+        try:
+            chunk = faiss.serialize_index(self.index)
+            with open(f"{self.index_name}.pkl", "wb") as f:
+                pickle.dump(chunk, f)
+            cprint(f"Index {self.index_name} saved successfully.", "green")
+        except Exception as e:
+            cprint(f"Error saving index: {e}", "red")
+            raise
 
     def load_index(self) -> faiss.Index:
         """
@@ -101,9 +145,16 @@ class FqlDb:
             faiss.Index: The loaded FAISS index.
         """
         index_file = f"{self.index_name}.pkl"
-        with open(index_file, "rb") as f:
-            index = faiss.deserialize_index(pickle.load(f))
-        return index
+        try:
+            with open(index_file, "rb") as f:
+                index = faiss.deserialize_index(pickle.load(f))
+            return index
+        except FileNotFoundError:
+            cprint(f"Index file {index_file} not found.", "red")
+            raise
+        except Exception as e:
+            cprint(f"Error loading index from {index_file}: {e}", "red")
+            raise
 
     def store_to_db(self, data: List[IndexData]) -> None:
         """
@@ -135,6 +186,7 @@ class FqlDb:
     def search_index(self, query: np.ndarray, k: int = 3) -> Tuple[List[float], List[int]]:
         """
         Searches the FAISS index for the nearest neighbors of a query vector.
+        If using FastEmbed, generates embeddings for the query.
 
         Args:
             query (np.ndarray): The query vector.
@@ -143,6 +195,13 @@ class FqlDb:
         Returns:
             Tuple[List[float], List[int]]: A tuple containing the distances and IDs of the nearest neighbors.
         """
+        if self.use_fastembed and self.embedding_model:
+             try:
+                 query_vector = self.embedding_model.embed(query)[0]
+                 query = np.array([query_vector], dtype=np.float32)
+             except Exception as e:
+                 cprint(f"FastEmbed embedding generation failed for query: {e}", "red")
+                 raise
         D, I = self.index.search(query, k)
         # Convert numpy types to standard Python types
         distances = [float(d) for d in D[0]]
@@ -194,14 +253,18 @@ class FqlDb:
     def usage(self):
         """Prints usage instructions for the FqlDb class."""
         cprint("Usage:","cyan")
-        cprint("Initialize FqlDb:","green")
+        cprint("Initialize FqlDb with FAISS:","green")
         cprint("  fql_db = FqlDb(index_name='my_index', dimension=128, db_name='my_db.db')","white")
+        cprint("Initialize FqlDb with FastEmbed:","green")
+        cprint("  fql_db = FqlDb(index_name='my_index', db_name='my_db.db', use_fastembed=True, fastembed_model_name='BAAI/bge-small-en-v1.5')","white")
         cprint("Add data to the index:","green")
         cprint("  fql_db.add_to_index(data=[IndexData(...)])","white")
         cprint("Store data to the database:","green")
         cprint("  fql_db.store_to_db(data=[IndexData(...)])","white")
         cprint("Search the index:","green")
         cprint("  distances, ids = fql_db.search_index(query=np.array([1.0, 2.0], dtype=np.float32), k=3)","white")
+        cprint("  # OR, if using FastEmbed, pass the query text:","white")
+        cprint("  distances, ids = fql_db.search_index(query='search query', k=3)","white")
         cprint("Retrieve data from the database:","green")
         cprint("  retrieved_data = fql_db.retrieve(ids=[1, 2, 3])","white")
         cprint("Save the index:","green")
@@ -230,7 +293,7 @@ def cleanup_test_files(index_name: str, db_name: str):
 
 def test_fql_db():
     """
-    Tests the FqlDb class.
+    Tests the FqlDb class with both FAISS and FastEmbed.
     """
     cprint("Starting FqlDb tests...", "blue")
 
@@ -238,6 +301,7 @@ def test_fql_db():
     index_name = "test_index"
     dimension = 2
     db_name = "test.db"
+    fastembed_model_name = "BAAI/bge-small-en-v1.5"
 
     # --- Ensure clean state before test ---
     cleanup_test_files(index_name, db_name)
@@ -251,7 +315,8 @@ def test_fql_db():
             IndexData(vector=np.array([3.0, 4.0], dtype=np.float32), id=2, content="Test content 2", metadata={"key2": "value2"}),
         ]
 
-        # Create FqlDb instance
+        # --- Test FAISS ---
+        cprint("\nTesting FAISS...", "green")
         fql_db = FqlDb(index_name=index_name, dimension=dimension, db_name=db_name)
 
         # Test add_to_index and store_to_db
@@ -266,13 +331,13 @@ def test_fql_db():
         # Sort IDs to ensure consistent order for assertion
         ids.sort()
         assert ids == [1, 2]
-        cprint(f"Search results - Distances: {distances}, IDs: {ids}", "cyan")
+        cprint(f"FAISS Search results - Distances: {distances}, IDs: {ids}", "cyan")
 
         retrieved_data = fql_db.retrieve(ids)
         assert len(retrieved_data) == 2, f"Expected 2 results, got {len(retrieved_data)}. Data: {retrieved_data}"
         retrieved_ids = sorted([row[0] for row in retrieved_data]) # Sort retrieved IDs
         assert retrieved_ids == ids, f"Expected IDs {ids}, got {retrieved_ids}"
-        cprint(f"Retrieved data: {retrieved_data}", "cyan")
+        cprint(f"FAISS Retrieved data: {retrieved_data}", "cyan")
 
 
         # Test save_index and load_index
@@ -285,7 +350,7 @@ def test_fql_db():
         loaded_fql_db = FqlDb(index_name=index_name, dimension=dimension, db_name=db_name)  # Load index
         # Verify loaded index has data
         assert loaded_fql_db.index.ntotal == len(test_data)
-        cprint("Index loaded successfully after save.", "green")
+        cprint("FAISS Index loaded successfully after save.", "green")
 
         # Test search and retrieve with loaded index
         distances_loaded, ids_loaded = loaded_fql_db.search_index(query_vector, k=2)
@@ -295,6 +360,62 @@ def test_fql_db():
         assert len(retrieved_data_loaded) == 2
         retrieved_ids_loaded = sorted([row[0] for row in retrieved_data_loaded])
         assert retrieved_ids_loaded == ids_loaded
+        # --- End Test FAISS ---
+
+        # --- Test FastEmbed ---
+        cprint("\nTesting FastEmbed...", "green")
+        # Create a new set of test data without pre-defined vectors
+        test_data_fastembed = [
+            IndexData(vector=None, id=3, content="FastEmbed test content 1", metadata={"key3": "value3"}),
+            IndexData(vector=None, id=4, content="FastEmbed test content 2", metadata={"key4": "value4"}),
+        ]
+        # Clean up old database
+        if loaded_fql_db and loaded_fql_db.connection:
+            loaded_fql_db.connection.close()
+            loaded_fql_db.connection = None
+        del loaded_fql_db
+        cleanup_test_files(index_name, db_name)
+
+        fql_db_fastembed = FqlDb(index_name=index_name, dimension=0, db_name=db_name, use_fastembed=True, fastembed_model_name=fastembed_model_name)
+
+        fql_db_fastembed.add_to_index(test_data_fastembed)
+        fql_db_fastembed.store_to_db(test_data_fastembed)
+
+        # Search with text query
+        query_text = "FastEmbed query"
+        distances_fastembed, ids_fastembed = fql_db_fastembed.search_index(query_text, k=2)
+        assert len(distances_fastembed) == 2
+        assert len(ids_fastembed) == 2
+        ids_fastembed.sort()
+        assert ids_fastembed == [3, 4]
+        cprint(f"FastEmbed Search results - Distances: {distances_fastembed}, IDs: {ids_fastembed}", "cyan")
+
+        retrieved_data_fastembed = fql_db_fastembed.retrieve(ids_fastembed)
+        assert len(retrieved_data_fastembed) == 2
+        retrieved_ids_fastembed = sorted([row[0] for row in retrieved_data_fastembed])
+        assert retrieved_ids_fastembed == ids_fastembed
+        cprint(f"FastEmbed Retrieved data: {retrieved_data_fastembed}", "cyan")
+
+        # Save and Load FastEmbed Index
+        fql_db_fastembed.save_index()
+         # Close the current connection before loading a new instance
+        if fql_db_fastembed.connection:
+            fql_db_fastembed.connection.close()
+            fql_db_fastembed.connection = None # Prevent __del__ from trying to close again
+
+        loaded_fql_db_fastembed = FqlDb(index_name=index_name, dimension=0, db_name=db_name, use_fastembed=True, fastembed_model_name=fastembed_model_name)
+        assert loaded_fql_db_fastembed.index.ntotal == len(test_data_fastembed)
+        cprint("FastEmbed Index loaded successfully after save.", "green")
+
+        distances_loaded, ids_loaded = loaded_fql_db_fastembed.search_index(query_text, k=2)
+        ids_loaded.sort()
+        assert ids_loaded == ids_fastembed
+        retrieved_data_loaded = loaded_fql_db_fastembed.retrieve(ids_loaded)
+        assert len(retrieved_data_loaded) == 2
+        retrieved_ids_loaded = sorted([row[0] for row in retrieved_data_loaded])
+        assert retrieved_ids_loaded == ids_loaded
+
+        # --- End Test FastEmbed ---
 
         cprint("All FqlDb tests passed!", "green")
 
@@ -310,9 +431,19 @@ def test_fql_db():
         if loaded_fql_db and loaded_fql_db.connection:
             loaded_fql_db.connection.close()
             loaded_fql_db.connection = None
+        if hasattr(fql_db_fastembed, 'connection') and fql_db_fastembed.connection:
+            fql_db_fastembed.connection.close()
+            fql_db_fastembed.connection = None
+        if hasattr(loaded_fql_db_fastembed, 'connection') and loaded_fql_db_fastembed.connection:
+            loaded_fql_db_fastembed.connection.close()
+            loaded_fql_db_fastembed.connection = None
         # Explicitly delete objects before cleanup to trigger __del__ if needed (though connection is now None)
         del fql_db
         del loaded_fql_db
+        if 'fql_db_fastembed' in locals():
+            del fql_db_fastembed
+        if 'loaded_fql_db_fastembed' in locals():
+            del loaded_fql_db_fastembed
         cleanup_test_files(index_name, db_name)
         # ---------------------------
 
