@@ -211,3 +211,4 @@ pyrightconfig.json
 .env
 doc_load.txt
 docs/**
+fql.db
