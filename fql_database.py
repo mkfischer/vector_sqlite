@@ -9,6 +9,7 @@ from termcolor import cprint
 import argparse
 from pydantic import BaseModel as PydanticBaseModel, Field, model_validator
 import math
+import json # Added import
 
 # --- Data Schema ---
 class BaseModel(PydanticBaseModel):
