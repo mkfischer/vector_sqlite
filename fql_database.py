@@ -2,12 +2,26 @@ import faiss
 import numpy as np
 import sqlite3
 from typing import Optional, List, Dict, Tuple, Union
-from data_schema import IndexData
+# Removed: from data_schema import IndexData
 from contextlib import closing
 import pickle
 import os
 from termcolor import cprint
 import argparse
+from pydantic import BaseModel as PydanticBaseModel # Added import
+
+# --- Added classes from data_schema.py ---
+class BaseModel(PydanticBaseModel):
+    class Config:
+        arbitrary_types_allowed = True
+
+class IndexData(BaseModel):
+    vector:np.ndarray
+    id: int
+    content:str
+    metadata:Dict={}
+# --- End of added classes ---
+
 
 class FqlDb:
     """
@@ -323,8 +337,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.usage:
-        fql_db = FqlDb(index_name='temp', dimension=1)  # Dummy instantiation for usage printing
+        # Need to instantiate with valid dimension even for usage
+        fql_db = FqlDb(index_name='temp', dimension=1, db_name='temp.db')
         fql_db.usage()
+        # Clean up dummy files created for usage
+        cleanup_test_files('temp', 'temp.db')
         del fql_db
     else:
         test_fql_db()
