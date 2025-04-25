@@ -309,6 +309,8 @@ def test_fql_db():
 
     fql_db = None # Initialize to None for finally block
     loaded_fql_db = None # Initialize to None for finally block
+    fql_db_fastembed = None
+    loaded_fql_db_fastembed = None
     try:
         test_data = [
             IndexData(vector=np.array([1.0, 2.0], dtype=np.float32), id=1, content="Test content 1", metadata={"key1": "value1"}),
