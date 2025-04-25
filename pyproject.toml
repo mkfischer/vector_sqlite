@@ -3,5 +3,8 @@ name = "vector-sqlite"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
+    "faiss-cpu>=1.10.0",
+    "pydantic>=2.11.3",
     "sentence-transformers>=4.1.0",
+    "termcolor>=3.0.1",
 ]
