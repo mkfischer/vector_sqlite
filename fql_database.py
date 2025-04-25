@@ -9,52 +9,91 @@ import os
 from termcolor import cprint
 import argparse
 
+# Import fastembed if USE_FASTEMBED is True
+USE_FASTEMBED = True
+if USE_FASTEMBED:
+    from fastembed import TextEmbedding
+
 class FqlDb:
     """
-    A class for combining vector similarity search with a SQLite database.
+    A class for combining vector similarity search with a SQLite database,
+    offering options for FAISS or fastembed indexing.
     """
 
-    def __init__(self, index_name: str, dimension: int, db_name: str = "fql.db"):
+    def __init__(
+        self,
+        index_name: str,
+        dimension: int,
+        db_name: str = "fql.db",
+        use_fastembed: bool = False,
+        fastembed_model_name: str = "BAAI/bge-small-en-v1.5",  # Default fastembed model
+    ):
         """
         Initializes the FqlDb object.
 
         Args:
-            index_name (str): The name of the index.
+            index_name (str): The name of the index and database table.
             dimension (int): The dimension of the vectors.
             db_name (str, optional): The name of the SQLite database file. Defaults to "fql.db".
+            use_fastembed (bool, optional): Whether to use fastembed for embeddings. Defaults to False (FAISS).
+            fastembed_model_name (str, optional): The name of the fastembed model to use.
+                Defaults to "BAAI/bge-small-en-v1.5".
         """
         self.index_name = index_name
         self.dimension = dimension
         self.db_name = db_name
+        self.use_fastembed = use_fastembed
+        self.fastembed_model_name = fastembed_model_name
         self.connection = sqlite3.Connection(self.db_name, isolation_level=None)
+        self.embedding_model = None  # Initialize embedding_model
         self.index = self._load_or_build_index()
 
-    def _load_or_build_index(self) -> faiss.IndexIDMap2:
-        """
-        Loads the index from file if it exists, otherwise builds a new index.
+    def _load_or_build_index(self) -> Union[faiss.IndexIDMap2, "fastembed.embedding.TextEmbedding"]:
+        """Loads the index from file if it exists, otherwise builds a new index.
 
         Returns:
-            faiss.IndexIDMap2: The loaded or newly built index.
+            Union[faiss.IndexIDMap2, fastembed.embedding.TextEmbedding]: The loaded or newly built index.
         """
         index_file = f"{self.index_name}.pkl"
         if os.path.exists(index_file):
             try:
-                # Use the instance method load_index which uses self.index_name
                 self.index = self.load_index()
                 cprint(f"Index {self.index_name} loaded successfully.", "green")
             except Exception as e:
                 cprint(f"Failed to load index {self.index_name}: {e}. Building a new one.", "yellow")
-                self.index = self.build_index(self.dimension)
+                self.index = self.build_index()
                 cprint(f"Index {self.index_name} created successfully.", "green")
         else:
-            self.index = self.build_index(self.dimension)
+            self.index = self.build_index()
             cprint(f"Index {self.index_name} created successfully.", "green")
         return self.index
 
+    def build_index(self) -> Union[faiss.IndexIDMap2, "fastembed.embedding.TextEmbedding"]:
+        """Builds a FAISS index or initializes a fastembed model based on configuration.
 
-    def build_index(self, dimension: int) -> faiss.IndexIDMap2:
+        Returns:
+            Union[faiss.IndexIDMap2, fastembed.embedding.TextEmbedding]: The FAISS index or fastembed model.
         """
-        Builds a FAISS index.
+        if self.use_fastembed:
+            try:
+                self.embedding_model = TextEmbedding(model_name=self.fastembed_model_name)
+                cprint(
+                    f"fastembed model '{self.fastembed_model_name}' initialized successfully.",
+                    "green",
+                )
+                return self.embedding_model #Return the fastembed model
+            except Exception as e:
+                cprint(
+                    f"Failed to initialize fastembed model: {e}. Falling back to FAISS.",
+                    "red",
+                )
+                self.use_fastembed = False  # Fallback to FAISS
+                return self._build_faiss_index(self.dimension)
+        else:
+            return self._build_faiss_index(self.dimension)
+
+    def _build_faiss_index(self, dimension: int) -> faiss.IndexIDMap2:
+        """Builds a FAISS index.
 
         Args:
             dimension (int): The dimension of the vectors.
@@ -67,8 +106,18 @@ class FqlDb:
         return index
 
     def add_to_index(self, data: List[IndexData]) -> None:
+        """Adds data to the FAISS index or generates embeddings using fastembed.
+
+        Args:
+            data (List[IndexData]): A list of IndexData objects to add.
         """
-        Adds data to the FAISS index.
+        if self.use_fastembed:
+            self._add_to_index_fastembed(data)
+        else:
+            self._add_to_index_faiss(data)
+
+    def _add_to_index_faiss(self, data: List[IndexData]) -> None:
+        """Adds data to the FAISS index.
 
         Args:
             data (List[IndexData]): A list of IndexData objects to add.
@@ -82,20 +131,30 @@ class FqlDb:
         ids = np.array(ids, dtype=np.int64)
         vectors = np.array(vectors, dtype=np.float32)
         self.index.add_with_ids(vectors, ids)
-        cprint(f"Added {len(data)} vectors to index {self.index_name}.", "green")
+        cprint(f"Added {len(data)} vectors to FAISS index {self.index_name}.", "green")
+
+    def _add_to_index_fastembed(self, data: List[IndexData]) -> None:
+         """Adds data to the fastembed index.
+
+         Args:
+             data (List[IndexData]): A list of IndexData objects to add.
+         """
+         cprint("fastembed indexing is not supported.  Please use FAISS indexing.", "red")
+         raise NotImplementedError("fastembed indexing is not supported.  Please use FAISS indexing.")
 
     def save_index(self) -> None:
+        """Saves the FAISS index to a file.
         """
-        Saves the FAISS index to a file.
-        """
-        chunk = faiss.serialize_index(self.index)
-        with open(f"{self.index_name}.pkl", "wb") as f:
-            pickle.dump(chunk, f)
-        cprint(f"Index {self.index_name} saved successfully.", "green")
+        if self.use_fastembed:
+            cprint("Saving index with fastembed is not supported.  Please use FAISS indexing.", "red")
+        else:
+            chunk = faiss.serialize_index(self.index)
+            with open(f"{self.index_name}.pkl", "wb") as f:
+                pickle.dump(chunk, f)
+            cprint(f"FAISS index {self.index_name} saved successfully.", "green")
 
     def load_index(self) -> faiss.Index:
-        """
-        Loads the FAISS index from file using the instance's index_name.
+        """Loads the FAISS index from file using the instance's index_name.
 
         Returns:
             faiss.Index: The loaded FAISS index.
@@ -106,8 +165,7 @@ class FqlDb:
         return index
 
     def store_to_db(self, data: List[IndexData]) -> None:
-        """
-        Stores data to the SQLite database.
+        """Stores data to the SQLite database.
 
         Args:
             data (List[IndexData]): A list of IndexData objects to store.
@@ -132,9 +190,23 @@ class FqlDb:
             cprint(f"Could not complete database operation: {e}", "red")
             raise
 
-    def search_index(self, query: np.ndarray, k: int = 3) -> Tuple[List[float], List[int]]:
+    def search_index(self, query: str, k: int = 3) -> Tuple[List[float], List[int]]:
+        """Searches the FAISS index or generates embeddings using fastembed for the nearest neighbors of a query.
+
+        Args:
+            query (str): The query string.
+            k (int, optional): The number of nearest neighbors to return. Defaults to 3.
+
+        Returns:
+            Tuple[List[float], List[int]]: A tuple containing the distances and IDs of the nearest neighbors.
         """
-        Searches the FAISS index for the nearest neighbors of a query vector.
+        if self.use_fastembed:
+            return self._search_index_fastembed(query, k)
+        else:
+            return self._search_index_faiss(query, k)
+
+    def _search_index_faiss(self, query: np.ndarray, k: int = 3) -> Tuple[List[float], List[int]]:
+        """Searches the FAISS index for the nearest neighbors of a query vector.
 
         Args:
             query (np.ndarray): The query vector.
@@ -143,15 +215,30 @@ class FqlDb:
         Returns:
             Tuple[List[float], List[int]]: A tuple containing the distances and IDs of the nearest neighbors.
         """
+        if not isinstance(query, np.ndarray):
+            cprint("Query must be a numpy array for FAISS search.", "red")
+            raise ValueError("Query must be a numpy array for FAISS search.")
         D, I = self.index.search(query, k)
         # Convert numpy types to standard Python types
         distances = [float(d) for d in D[0]]
         ids = [int(i) for i in I[0]]
         return distances, ids
 
-    def retrieve(self, ids: List[int]) -> List[Tuple]:
+    def _search_index_fastembed(self, query: str, k: int = 3) -> Tuple[List[float], List[int]]:
+        """Searches the fastembed index for the nearest neighbors of a query string.
+
+        Args:
+            query (str): The query string.
+            k (int, optional): The number of nearest neighbors to return. Defaults to 3.
+
+        Returns:
+            Tuple[List[float], List[int]]: A tuple containing the distances and IDs of the nearest neighbors.
         """
-        Retrieves data from the SQLite database based on a list of IDs.
+        cprint("fastembed search is not supported.  Please use FAISS indexing.", "red")
+        raise NotImplementedError("fastembed search is not supported.  Please use FAISS indexing.")
+
+    def retrieve(self, ids: List[int]) -> List[Tuple]:
+        """Retrieves data from the SQLite database based on a list of IDs.
 
         Args:
             ids (List[int]): A list of IDs to retrieve. Expects standard Python ints.
@@ -194,8 +281,11 @@ class FqlDb:
     def usage(self):
         """Prints usage instructions for the FqlDb class."""
         cprint("Usage:","cyan")
-        cprint("Initialize FqlDb:","green")
+        cprint("Initialize FqlDb with FAISS (default):","green")
         cprint("  fql_db = FqlDb(index_name='my_index', dimension=128, db_name='my_db.db')","white")
+        if USE_FASTEMBED:
+            cprint("Initialize FqlDb with fastembed:","green")
+            cprint("  fql_db = FqlDb(index_name='my_index', dimension=384, db_name='my_db.db', use_fastembed=True, fastembed_model_name='BAAI/bge-small-en-v1.5')","white")
         cprint("Add data to the index:","green")
         cprint("  fql_db.add_to_index(data=[IndexData(...)])","white")
         cprint("Store data to the database:","green")
