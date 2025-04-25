@@ -1,16 +1,29 @@
 import faiss
 import numpy as np
 import sqlite3
-from typing import List, Dict, Tuple
-from data_schema import IndexData
+from typing import List, Dict, Tuple, Optional
 from contextlib import closing
 import pickle
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 import unittest
 from termcolor import colored
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import ValidationError
+
 
 class FqlDb:
+
+    class BaseModel(PydanticBaseModel):
+        class Config:
+            arbitrary_types_allowed = True
+
+    class IndexData(BaseModel):
+        vector: np.ndarray
+        id: int
+        content: str
+        metadata: Dict = {}
+
     def __init__(self, index_name: str = "fql_index", dimension: int = 384, db_name: str = "fql.db", model_name: str = "all-MiniLM-L6-v2", step_size: int = 3):
         self.index_name = index_name
         self.dimension = dimension
@@ -26,7 +39,7 @@ class FqlDb:
         index = faiss.IndexIDMap2(flat_index)
         return index
 
-    def add_to_index(self, data: List[IndexData]) -> None:
+    def add_to_index(self, data: List["FqlDb.IndexData"]) -> None:
         ids = []
         vectors = []
         for point in data:
@@ -47,7 +60,7 @@ class FqlDb:
             index = faiss.deserialize_index(pickle.load(f))
         return index
 
-    def store_to_db(self, data: List[IndexData]) -> None:
+    def store_to_db(self, data: List["FqlDb.IndexData"]) -> None:
         try:
             values = []
             for point in data:
@@ -94,7 +107,7 @@ class FqlDb:
             embeddings = self.model.encode(batch)
             all_points = []
             for i in range(len(batch)):
-                point = IndexData(vector=embeddings[i], content=batch[i], id=id)
+                point = FqlDb.IndexData(vector=embeddings[i], content=batch[i], id=id)
                 id += 1
                 all_points.append(point)
             # add to index
