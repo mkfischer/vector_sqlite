@@ -3,14 +3,14 @@ name = "vector-sqlite"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-    "faiss-cpu>=1.10.0",
-    "fastembed>=0.6.1", # Added fastembed
-    "pillow>=11.2.1",
-    "pydantic>=2.11.3",
-    "sentence-transformers>=4.1.0", # Keep for default mode testing
-    "termcolor>=3.0.1",
-    "numpy>=1.24.0",
-    "onnxruntime>=1.15.0",
-    "torch>=2.0.0", # Added torch (needed by fastembed rerankers/some models)
-    "transformers>=4.30.0", # Added transformers (needed by fastembed tokenizers)
+    "faiss-cpu>=1.10.0", # For vector indexing
+    "fastembed>=0.6.1", # For optional embedding/reranking backend
+    "pillow>=11.2.1", # For image handling with fastembed
+    "pydantic>=2.11.3", # For data validation
+    "sentence-transformers>=4.1.0", # For default embedding backend
+    "termcolor>=3.0.1", # For colored terminal output
+    "numpy>=1.24.0", # Core dependency for numerical operations
+    "onnxruntime>=1.15.0", # Required by fastembed
+    "torch>=2.0.0", # Required by fastembed/sentence-transformers
+    "transformers>=4.30.0", # Required by fastembed/sentence-transformers
 ]
