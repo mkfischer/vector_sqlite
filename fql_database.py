@@ -715,6 +715,7 @@ class FqlDb:
     # --- Housekeeping ---
 
     def __del__(self):
+        """
         Closes the database connection when the object is deleted.
         """
         if hasattr(self, "connection") and self.connection:
